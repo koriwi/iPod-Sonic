@@ -1,0 +1,335 @@
+package main
+
+import (
+	"encoding/json"
+	"encoding/xml"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net/http"
+	"os"
+	"sync"
+
+	ffmpeg "github.com/u2takey/ffmpeg-go"
+	magick "gopkg.in/gographics/imagick.v3/imagick"
+)
+
+var serverURL = "https://music.gosewis.ch/rest"
+var userName = "koriwi"
+var userPassword = "JnFcXuZ7!279863145"
+
+func getUrl(endpoint string, extraParams ...string) string {
+	extraString := ""
+	for _, param := range extraParams {
+		extraString = fmt.Sprintf("%s&%s", extraString, param)
+	}
+	url := fmt.Sprintf("%s/%s?v=1.16.1&c=iPodSonic&u=%s&p=%s%s", serverURL, endpoint, userName, userPassword, extraString)
+	fmt.Println(url)
+	return url
+}
+
+type Song struct {
+	ID                     string `xml:"id,attr"`
+	Title                  string `xml:"title,attr"`
+	Album                  string `xml:"album,attr"`
+	Suffix                 string `xml:"suffix,attr"`
+	Size                   int64  `xml:"size,attr"`
+	OriginalSongFileName   string
+	OriginalCoverFileName  string
+	ConvertedSongFileName  string
+	ConvertedCoverFileName string
+}
+type Starred struct {
+	XMLName xml.Name `xml:"starred"`
+	Songs   []Song   `xml:"song"`
+}
+type SSResponse struct {
+	XMLName xml.Name `xml:"subsonic-response"`
+	Starred Starred
+}
+
+func convertToMP3(song Song, quality uint) error {
+	err := ffmpeg.Input(song.OriginalSongFileName).Output(
+		song.ConvertedSongFileName,
+		ffmpeg.KwArgs{"vn": "", "q:a": quality, "map_metadata": 0, "id3v2_version": 3, "write_id3v1": 1, "write_id3v2": 1, "y": ""},
+	).OverWriteOutput().Run()
+	if err != nil {
+		return errors.New(fmt.Sprint("error extracting cover from", song.OriginalSongFileName, err))
+	}
+
+	return nil
+}
+func extractCover(song Song, coverStream Stream, coverSize uint) error {
+
+	err := ffmpeg.Input(song.OriginalSongFileName).Output(
+		song.OriginalCoverFileName,
+		ffmpeg.KwArgs{"an": "", "update": 1, "pix_fmt": "yuvj420p", "color_range": "full", "colorspace": "bt470bg"},
+	).OverWriteOutput().Run()
+	if err != nil {
+		return errors.New(fmt.Sprint("error extracting cover from", song.OriginalSongFileName, err))
+	}
+
+	mw := magick.NewMagickWand()
+	defer mw.Destroy()
+	err = mw.ReadImage(song.OriginalCoverFileName)
+	if err != nil {
+		return errors.New(fmt.Sprint("error reading extracted cover file", song.OriginalCoverFileName, err))
+	}
+
+	aspectRatio := float32(mw.GetImageWidth()) / float32(mw.GetImageHeight())
+	var width = coverSize
+	var height = uint(float32(coverSize) * aspectRatio)
+
+	err = mw.ResizeImage(width, height, magick.FILTER_LANCZOS)
+	if err != nil {
+		return errors.New(fmt.Sprint("error resizing cover file", song.OriginalCoverFileName, err))
+	}
+
+	err = mw.SetImageCompressionQuality(75)
+	if err != nil {
+		return errors.New(fmt.Sprint("error compressing cover file", song.OriginalCoverFileName, err))
+	}
+
+	err = mw.StripImage()
+	if err != nil {
+		return errors.New(fmt.Sprint("error stripping cover file", song.OriginalCoverFileName, err))
+	}
+
+	err = mw.SetInterlaceScheme(magick.INTERLACE_NO)
+	if err != nil {
+		return errors.New(fmt.Sprint("error disabling interlace for cover file", song.OriginalCoverFileName, err))
+	}
+
+	// err = mw.SetImageColorspace(magick.COLORSPACE_YUV)
+	// if err != nil {
+	// 	return errors.New(fmt.Sprint("error setting color space for cover file", song.OriginalCoverFileName, err))
+	// }
+
+	// err = mw.SetOption("jpeg:sampling-factor", "2x2,1x1,1x1")
+	// if err != nil {
+	// 	return errors.New(fmt.Sprint("error setting color space for cover file", song.OriginalCoverFileName, err))
+	// }
+
+	err = mw.WriteImage(song.ConvertedCoverFileName)
+	if err != nil {
+		return errors.New(fmt.Sprint("error saving cover file", song.ConvertedCoverFileName, err))
+	}
+
+	return nil
+}
+
+func downloadSong(song Song) error {
+	fmt.Println("Downloading", song.Album, song.Title)
+
+	url := getUrl("download", "id="+string(song.ID))
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Println("could not download", song.Title)
+		return errors.New("could not download " + song.Title + "\n" + err.Error())
+	}
+	defer resp.Body.Close()
+
+	out, err := os.Create(song.OriginalSongFileName)
+	if err != nil {
+		// fmt.Println("file already exists", song.Title)
+		return errors.New("could not create file " + song.Title + "\n" + err.Error())
+	}
+
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		fmt.Println("could not save to file", song.Title)
+		return errors.New("could not save to file " + song.Title + "\n" + err.Error())
+	}
+	return nil
+}
+
+type FFProbe struct {
+	Streams []Stream `json:"streams"`
+}
+type Stream struct {
+	Index     int    `json:"index"`
+	CodecType string `json:"codec_type"`
+	CodecName string `json:"codec_name"`
+}
+
+type SongConfig struct {
+	mp3               bool
+	coverSize         uint
+	origDir           string
+	convertedDir      string
+	origCoverDir      string
+	convertedCoverDir string
+	mp3Quality        uint
+}
+
+func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan struct{}) {
+	defer wg.Done()
+	sem <- struct{}{}
+	defer func() { <-sem }() // Release semaphore when done
+
+	song.OriginalSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.origDir, song.Title, song.Suffix)
+	song.ConvertedSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.convertedDir, song.Title, "mp3")
+	info, err := os.Stat(song.OriginalSongFileName)
+	if err != nil || info.Size() != song.Size {
+		fmt.Print("could not find song locally, ")
+		err = downloadSong(song)
+		if err != nil {
+			fmt.Println("aborting download", err)
+			return
+		}
+	}
+	// move this to a function later
+	probeOutput, err := ffmpeg.Probe(song.OriginalSongFileName)
+	var probe FFProbe
+	json.Unmarshal([]byte(probeOutput), &probe)
+
+	var coverStream *Stream
+	coverConverted := false
+	for _, stream := range probe.Streams {
+		if stream.CodecType == "video" {
+			coverStream = &stream
+			break
+		}
+	}
+	if coverStream != nil {
+		song.OriginalCoverFileName = fmt.Sprintf("%s/%s.%s", songConfig.origCoverDir, song.Title, coverStream.CodecName)
+		song.ConvertedCoverFileName = fmt.Sprintf("%s/%s.%s", songConfig.convertedCoverDir, song.Title, coverStream.CodecName)
+		err = extractCover(song, *coverStream, uint(songConfig.coverSize))
+		if err == nil {
+			coverConverted = true
+		}
+	}
+	fmt.Println("cover converted", coverConverted)
+
+	if songConfig.mp3 {
+		convertToMP3(song, songConfig.mp3Quality)
+	}
+
+	if coverConverted {
+		inputSong := song.OriginalSongFileName
+		if songConfig.mp3 {
+			inputSong = song.ConvertedSongFileName
+		}
+		music := ffmpeg.Input(inputSong)
+		cover := ffmpeg.Input(song.ConvertedCoverFileName)
+		ffmpeg.Output([]*ffmpeg.Stream{music, cover}, song.ConvertedSongFileName+".mp3", ffmpeg.KwArgs{
+			"c":             "copy",
+			"metadata:s:v":  `comment="Cover (front)"`,
+			"id3v2_version": 3,
+		}, ffmpeg.KwArgs{
+			"disposition:v": "attached_pic", // Mark video as attached picture
+			"metadata:s:v":  `title="Album cover"`,
+		}).OverWriteOutput().Run()
+		// ffmpeg.Concat().Output(, ffmpeg.KwArgs{"metadata:s:v": "title=\"Album cover\""}).Run()
+
+		// -map 0:0 \
+		// -map 1:0 \
+		// -c copy \
+		// -id3v2_version 3 \
+		// -metadata:s:v title="Album cover" \
+		// -metadata:s:v comment="Cover (front)" \
+	}
+	return
+	// coverArtFileName2 := fmt.Sprintf("%s/%s.%s.%s", origDir, song.Title, song.Suffix, coverSuffix)
+	// ---
+
+	if songConfig.mp3 {
+		fmt.Println("do mp3 conversion here")
+	}
+}
+
+func main() {
+	concurrency := flag.Int("concurrency", 5, "set how many tasks run at the same time")
+	coverSize := flag.Uint("coversize", 150, "set coverart size to <coversize>x<coversize>")
+	dir := flag.String("dir", "./ipodSonic_songs", "the folder where ipodSonic can work with and save songs")
+	mp3 := flag.Bool("mp3", false, "compress everything to 320kbps mp3")
+	mp3Quality := flag.Uint("quality", 2, "only has an effect when converting to mp3. sets the mp3 quality. 0=best but largest 9=worst but smallest")
+
+	flag.Parse()
+	ffmpeg.LogCompiledCommand = false
+	magick.Initialize()
+	defer magick.Terminate()
+
+	err := os.MkdirAll(*dir, os.ModePerm)
+	if err != nil {
+		panic(err)
+	}
+
+	origDir := fmt.Sprintf("./%s/original", *dir)
+	err = os.MkdirAll(origDir, os.ModePerm)
+	if err != nil {
+		fmt.Println("could not create original directory", err)
+		panic(err)
+	}
+
+	convertedDir := fmt.Sprintf("./%s/converted", *dir)
+	err = os.MkdirAll(convertedDir, os.ModePerm)
+	if err != nil {
+		fmt.Println("could not create converted directory", err)
+		panic(err)
+	}
+
+	origCoverDir := fmt.Sprintf("%s/covers", origDir)
+	err = os.MkdirAll(origCoverDir, os.ModePerm)
+	if err != nil {
+		fmt.Println("could not create original cover directory", err)
+		panic(err)
+	}
+
+	convertedCoverDir := fmt.Sprintf("%s/covers", convertedDir)
+	err = os.MkdirAll(convertedCoverDir, os.ModePerm)
+	if err != nil {
+		fmt.Println("could not create original cover directory", err)
+		panic(err)
+	}
+
+	songConfig := SongConfig{
+		mp3:               *mp3,
+		coverSize:         *coverSize,
+		origDir:           origDir,
+		convertedDir:      convertedDir,
+		origCoverDir:      origCoverDir,
+		convertedCoverDir: convertedCoverDir,
+		mp3Quality:        *mp3Quality,
+	}
+
+	fmt.Println("welcome to iPodSonic")
+
+	resp, err := http.Get(getUrl("getStarred"))
+	if err != nil {
+		panic(err)
+	}
+
+	defer resp.Body.Close()
+
+	var result SSResponse
+
+	err = xml.NewDecoder(resp.Body).Decode(&result)
+	if err != nil {
+		fmt.Println(err)
+		panic(err)
+	}
+
+	var wg sync.WaitGroup
+	sem := make(chan struct{}, *concurrency)
+	skipCount := 0
+	for _, song := range result.Starred.Songs {
+		// fileName := fmt.Sprintf("./starred_music/%s.%s", song.Title, song.Suffix)
+		// if *mp3 {
+		// 	fileName = fmt.Sprintf("./starred_music/%s.mp3", song.Title)
+		// }
+		//
+		// info, err := os.Stat(fileName)
+		// if err == nil && info.Size() == (song.Size) {
+		// 	// fmt.Println("skipping, file has the same size", starred.Title, starred.Size)
+		// 	skipCount++
+		// 	continue
+		// }
+		wg.Add(1)
+		go processSong(song, songConfig, &wg, sem)
+	}
+	wg.Wait()
+	fmt.Printf("skipped %d files as they were already downloaded in correct encoding\n", skipCount)
+
+}
