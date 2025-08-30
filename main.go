@@ -15,9 +15,9 @@ import (
 	magick "gopkg.in/gographics/imagick.v3/imagick"
 )
 
-var serverURL = "https://music.gosewis.ch/rest"
-var userName = "koriwi"
-var userPassword = "JnFcXuZ7!279863145"
+var serverURL = ""
+var userName = ""
+var userPassword = ""
 
 func getUrl(endpoint string, extraParams ...string) string {
 	extraString := ""
@@ -30,15 +30,16 @@ func getUrl(endpoint string, extraParams ...string) string {
 }
 
 type Song struct {
-	ID                     string `xml:"id,attr"`
-	Title                  string `xml:"title,attr"`
-	Album                  string `xml:"album,attr"`
-	Suffix                 string `xml:"suffix,attr"`
-	Size                   int64  `xml:"size,attr"`
-	OriginalSongFileName   string
-	OriginalCoverFileName  string
-	ConvertedSongFileName  string
-	ConvertedCoverFileName string
+	ID                             string `xml:"id,attr"`
+	Title                          string `xml:"title,attr"`
+	Album                          string `xml:"album,attr"`
+	Suffix                         string `xml:"suffix,attr"`
+	Size                           int64  `xml:"size,attr"`
+	OriginalSongFileName           string
+	OriginalCoverFileName          string
+	ConvertedSongFileName          string
+	ConvertedCoverFileName         string
+	ConvertedSongWithCoverFileName string
 }
 type Starred struct {
 	XMLName xml.Name `xml:"starred"`
@@ -158,6 +159,7 @@ type SongConfig struct {
 	coverSize         uint
 	origDir           string
 	convertedDir      string
+	convertedSongDir  string
 	origCoverDir      string
 	convertedCoverDir string
 	mp3Quality        uint
@@ -169,7 +171,8 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 	defer func() { <-sem }() // Release semaphore when done
 
 	song.OriginalSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.origDir, song.Title, song.Suffix)
-	song.ConvertedSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.convertedDir, song.Title, "mp3")
+	song.ConvertedSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.convertedSongDir, song.Title, "mp3")
+	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s_covered.%s", songConfig.convertedDir, song.Title, "mp3")
 	info, err := os.Stat(song.OriginalSongFileName)
 	if err != nil || info.Size() != song.Size {
 		fmt.Print("could not find song locally, ")
@@ -200,7 +203,6 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 			coverConverted = true
 		}
 	}
-	fmt.Println("cover converted", coverConverted)
 
 	if songConfig.mp3 {
 		convertToMP3(song, songConfig.mp3Quality)
@@ -213,7 +215,7 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 		}
 		music := ffmpeg.Input(inputSong)
 		cover := ffmpeg.Input(song.ConvertedCoverFileName)
-		ffmpeg.Output([]*ffmpeg.Stream{music, cover}, song.ConvertedSongFileName+".mp3", ffmpeg.KwArgs{
+		ffmpeg.Output([]*ffmpeg.Stream{music, cover}, song.ConvertedSongWithCoverFileName, ffmpeg.KwArgs{
 			"c":             "copy",
 			"metadata:s:v":  `comment="Cover (front)"`,
 			"id3v2_version": 3,
@@ -229,6 +231,8 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 		// -id3v2_version 3 \
 		// -metadata:s:v title="Album cover" \
 		// -metadata:s:v comment="Cover (front)" \
+	} else {
+		os.Rename(song.ConvertedSongFileName, song.ConvertedSongWithCoverFileName)
 	}
 	return
 	// coverArtFileName2 := fmt.Sprintf("%s/%s.%s.%s", origDir, song.Title, song.Suffix, coverSuffix)
@@ -245,8 +249,28 @@ func main() {
 	dir := flag.String("dir", "./ipodSonic_songs", "the folder where ipodSonic can work with and save songs")
 	mp3 := flag.Bool("mp3", false, "compress everything to 320kbps mp3")
 	mp3Quality := flag.Uint("quality", 2, "only has an effect when converting to mp3. sets the mp3 quality. 0=best but largest 9=worst but smallest")
+	subsonicUrl := flag.String("url", "nourl", "the full url to the subsonic api like http://my.subsonic.com/rest")
+	userNameFlag := flag.String("user", "nouser", "your username")
+	passwordFlag := flag.String("pass", "nopass", "your password")
 
 	flag.Parse()
+
+	if *subsonicUrl == "nourl" {
+		fmt.Println("no -url found")
+		return
+	}
+	if *userNameFlag == "nouser" {
+		fmt.Println("no -user found")
+		return
+	}
+	if *passwordFlag == "nopass" {
+		fmt.Println("no -pass found")
+		return
+	}
+	serverURL = *subsonicUrl
+	userName = *userNameFlag
+	userPassword = *passwordFlag
+
 	ffmpeg.LogCompiledCommand = false
 	magick.Initialize()
 	defer magick.Terminate()
@@ -270,6 +294,13 @@ func main() {
 		panic(err)
 	}
 
+	convertedSongDir := fmt.Sprintf("%s/songs", convertedDir)
+	err = os.MkdirAll(convertedSongDir, os.ModePerm)
+	if err != nil {
+		fmt.Println("could not create converted songs directory", err)
+		panic(err)
+	}
+
 	origCoverDir := fmt.Sprintf("%s/covers", origDir)
 	err = os.MkdirAll(origCoverDir, os.ModePerm)
 	if err != nil {
@@ -280,7 +311,7 @@ func main() {
 	convertedCoverDir := fmt.Sprintf("%s/covers", convertedDir)
 	err = os.MkdirAll(convertedCoverDir, os.ModePerm)
 	if err != nil {
-		fmt.Println("could not create original cover directory", err)
+		fmt.Println("could not create converted cover directory", err)
 		panic(err)
 	}
 
@@ -289,6 +320,7 @@ func main() {
 		coverSize:         *coverSize,
 		origDir:           origDir,
 		convertedDir:      convertedDir,
+		convertedSongDir:  convertedSongDir,
 		origCoverDir:      origCoverDir,
 		convertedCoverDir: convertedCoverDir,
 		mp3Quality:        *mp3Quality,
