@@ -157,10 +157,11 @@ type Stream struct {
 type SongConfig struct {
 	mp3               bool
 	coverSize         uint
-	origDir           string
 	convertedDir      string
 	convertedSongDir  string
+	combinedSongDir   string
 	origCoverDir      string
+	origSongDir       string
 	convertedCoverDir string
 	mp3Quality        uint
 }
@@ -170,9 +171,9 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 	sem <- struct{}{}
 	defer func() { <-sem }() // Release semaphore when done
 
-	song.OriginalSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.origDir, song.Title, song.Suffix)
+	song.OriginalSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.origSongDir, song.Title, song.Suffix)
 	song.ConvertedSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.convertedSongDir, song.Title, "mp3")
-	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s_covered.%s", songConfig.convertedDir, song.Title, "mp3")
+	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s.%s", songConfig.combinedSongDir, song.Title, "mp3")
 	info, err := os.Stat(song.OriginalSongFileName)
 	if err != nil || info.Size() != song.Size {
 		fmt.Print("could not find song locally, ")
@@ -246,7 +247,7 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 func main() {
 	concurrency := flag.Int("concurrency", 5, "set how many tasks run at the same time")
 	coverSize := flag.Uint("coversize", 150, "set coverart size to <coversize>x<coversize>")
-	dir := flag.String("dir", "./ipodSonic_songs", "the folder where ipodSonic can work with and save songs")
+	dir := flag.String("dir", "./iPodSonic_songs", "the folder where ipodSonic can work with and save songs")
 	mp3 := flag.Bool("mp3", false, "compress everything to 320kbps mp3")
 	mp3Quality := flag.Uint("quality", 2, "only has an effect when converting to mp3. sets the mp3 quality. 0=best but largest 9=worst but smallest")
 	subsonicUrl := flag.String("url", "nourl", "the full url to the subsonic api like http://my.subsonic.com/rest")
@@ -280,14 +281,14 @@ func main() {
 		panic(err)
 	}
 
-	origDir := fmt.Sprintf("./%s/original", *dir)
+	origDir := fmt.Sprintf("%s/original", *dir)
 	err = os.MkdirAll(origDir, os.ModePerm)
 	if err != nil {
 		fmt.Println("could not create original directory", err)
 		panic(err)
 	}
 
-	convertedDir := fmt.Sprintf("./%s/converted", *dir)
+	convertedDir := fmt.Sprintf("%s/converted", *dir)
 	err = os.MkdirAll(convertedDir, os.ModePerm)
 	if err != nil {
 		fmt.Println("could not create converted directory", err)
@@ -298,6 +299,20 @@ func main() {
 	err = os.MkdirAll(convertedSongDir, os.ModePerm)
 	if err != nil {
 		fmt.Println("could not create converted songs directory", err)
+		panic(err)
+	}
+
+	combinedSongDir := fmt.Sprintf("%s/combined", convertedDir)
+	err = os.MkdirAll(combinedSongDir, os.ModePerm)
+	if err != nil {
+		fmt.Println("could not create converted songs directory", err)
+		panic(err)
+	}
+
+	origSongDir := fmt.Sprintf("%s/songs", origDir)
+	err = os.MkdirAll(origSongDir, os.ModePerm)
+	if err != nil {
+		fmt.Println("could not create original songs directory", err)
 		panic(err)
 	}
 
@@ -318,10 +333,11 @@ func main() {
 	songConfig := SongConfig{
 		mp3:               *mp3,
 		coverSize:         *coverSize,
-		origDir:           origDir,
 		convertedDir:      convertedDir,
 		convertedSongDir:  convertedSongDir,
+		combinedSongDir:   combinedSongDir,
 		origCoverDir:      origCoverDir,
+		origSongDir:       origSongDir,
 		convertedCoverDir: convertedCoverDir,
 		mp3Quality:        *mp3Quality,
 	}
