@@ -31,3 +31,7 @@ jobs:
         run: go build -x -v ./main.go || true
         env:
           CGO_ENABLED: 1
+      - name: pwd
+        run: pwd
+      - name: list dir content
+        run: ls -la
