@@ -14,7 +14,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: install dependencies
-        run: apt update; apt install -y ffmpeg imagemagick
+        run: sudo apt update; sudo apt install -y ffmpeg imagemagick
       - uses: actions/checkout@v4
 
       - name: Set up Go
