@@ -2,7 +2,8 @@
 # For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
 
 name: Build Linux
-
+permissions:
+  contents: read # access to check out code and install dependencies
 on:
   push:
     branches: ["master"]
