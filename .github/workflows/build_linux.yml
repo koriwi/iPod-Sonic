@@ -22,6 +22,12 @@ jobs:
           go-version: "1.24"
       - name: install dependencies
         run: sudo apt update; sudo apt install -y ffmpeg imagemagick
-
+      - name: Verify FFmpeg installation
+        run: |
+          which ffmpeg
+          ffmpeg -version
+          echo "PATH: $PATH"
       - name: Build
         run: go build -x -v ./main.go
+        env:
+          CGO_ENABLED: 1
