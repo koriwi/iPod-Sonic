@@ -24,3 +24,5 @@ jobs:
 
       - name: Build
         run: go build -v ./main.go
+        env:
+          CGO_ENABLED: 1
