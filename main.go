@@ -24,8 +24,8 @@ func getUrl(endpoint string, extraParams ...string) string {
 	for _, param := range extraParams {
 		extraString = fmt.Sprintf("%s&%s", extraString, param)
 	}
-	url := fmt.Sprintf("%s/%s?v=1.16.1&c=iPodSonic&u=%s&p=%s%s", serverURL, endpoint, userName, userPassword, extraString)
-	fmt.Println(url)
+	url := fmt.Sprintf("%s/%s?v=1.16.1&c=rocksonic&u=%s&p=%s%s", serverURL, endpoint, userName, userPassword, extraString)
+	fmt.Printf("%s/%s?v=1.16.1&c=rocksonic&u=%s&p=%s%s", serverURL, endpoint, userName, "*****", extraString)
 	return url
 }
 
@@ -247,7 +247,7 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 func main() {
 	concurrency := flag.Int("concurrency", 5, "set how many tasks run at the same time")
 	coverSize := flag.Uint("coversize", 150, "set coverart size to <coversize>x<coversize>")
-	dir := flag.String("dir", "./iPodSonic_songs", "the folder where ipodSonic can work with and save songs")
+	dir := flag.String("dir", "./rocksonic_songs", "the folder where rocksonic can work with and save songs")
 	mp3 := flag.Bool("mp3", false, "compress everything to 320kbps mp3")
 	mp3Quality := flag.Uint("quality", 2, "only has an effect when converting to mp3. sets the mp3 quality. 0=best but largest 9=worst but smallest")
 	subsonicUrl := flag.String("url", "nourl", "the full url to the subsonic api like http://my.subsonic.com/rest")
@@ -342,7 +342,7 @@ func main() {
 		mp3Quality:        *mp3Quality,
 	}
 
-	fmt.Println("welcome to iPodSonic")
+	fmt.Println("welcome to rocksonic")
 
 	resp, err := http.Get(getUrl("getStarred"))
 	if err != nil {
