@@ -28,6 +28,6 @@ jobs:
           ffmpeg -version
           echo "PATH: $PATH"
       - name: Build
-        run: go build -x -v ./main.go
+        run: go build -x -v ./main.go 2>&1
         env:
           CGO_ENABLED: 1
