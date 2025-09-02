@@ -238,7 +238,6 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 
 	if songConfig.mp3 && mp3ConvertNeeded(song.ConvertedSongFileName, uint8(songConfig.mp3Quality)) {
 		debrief.MP3Converted = true
-		fmt.Println("wrong quality, converting...", song.ConvertedSongFileName)
 		convertToMP3(song, songConfig.mp3Quality)
 	}
 
