@@ -2,7 +2,7 @@
 
 # download your liked songs, convert to mp3 with quality 3 [1 is highest, 10 is lowest], and embedd covers with a width of 200px
 
-go run main.go -url https://music.navidrome.example/rest -user jon -pass doe -mp3 -quality 3 -coversize 200
+./main -url https://music.navidrome.example/rest -user jon -pass doe -mp3 -quality 3 -coversize 200
 
 ###########
 # OPTIONAL STUFF, tells you the space used by your converted and/or covered songs, and the average bit_rate over 10 songs
