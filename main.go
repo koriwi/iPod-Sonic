@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -16,6 +17,7 @@ import (
 	magick "gopkg.in/gographics/imagick.v3/imagick"
 )
 
+var longest_song_title int64 = 0
 var serverURL = ""
 var userName = ""
 var userPassword = ""
@@ -206,7 +208,14 @@ func coverConvertNeeded(file string, newWidth uint16) bool {
 	return probe.Streams[0].Width != newWidth
 }
 
+type Debrief struct {
+	Downloaded     bool
+	CoverConverted bool
+	MP3Converted   bool
+}
+
 func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan struct{}) {
+	var debrief Debrief
 	defer wg.Done()
 	sem <- struct{}{}
 	defer func() { <-sem }() // Release semaphore when done
@@ -217,15 +226,20 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 	song.ConvertedSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.convertedSongDir, song.Title, "mp3")
 	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s.%s", songConfig.combinedSongDir, song.Title, "mp3")
 	info, err := os.Stat(song.OriginalSongFileName)
-	forceCoverConvert := false
+
 	if err != nil || info.Size() != song.Size {
-		fmt.Print("could not find song locally, ")
 		err = downloadSong(song)
-		forceCoverConvert = true
+		debrief.Downloaded = true
 		if err != nil {
 			fmt.Println("aborting download", err)
 			return
 		}
+	}
+
+	if songConfig.mp3 && mp3ConvertNeeded(song.ConvertedSongFileName, uint8(songConfig.mp3Quality)) {
+		debrief.MP3Converted = true
+		fmt.Println("wrong quality, converting...", song.ConvertedSongFileName)
+		convertToMP3(song, songConfig.mp3Quality)
 	}
 
 	// move this to a function later
@@ -234,32 +248,29 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 	json.Unmarshal([]byte(probeOutput), &probe)
 
 	var coverStream *Stream
-	coverConverted := false
 	for _, stream := range probe.Streams {
 		if stream.CodecType == "video" {
 			coverStream = &stream
 			break
 		}
 	}
+	includeCover := false
 	if coverStream != nil {
+		includeCover = true
 		song.OriginalCoverFileName = fmt.Sprintf("%s/%s.%s", songConfig.origCoverDir, song.Title, coverStream.CodecName)
 		song.ConvertedCoverFileName = fmt.Sprintf("%s/%s.%s", songConfig.convertedCoverDir, song.Title, coverStream.CodecName)
-		coverConvertNeeded := forceCoverConvert || coverConvertNeeded(song.ConvertedCoverFileName, uint16(songConfig.coverSize))
+		coverConvertNeeded := coverConvertNeeded(song.ConvertedCoverFileName, uint16(songConfig.coverSize))
 		if coverConvertNeeded {
 			err = extractCover(song, *coverStream, uint(songConfig.coverSize))
 			if err == nil {
-				coverConverted = true
+				debrief.CoverConverted = true
+			} else {
+				includeCover = false
 			}
-		} else {
-			coverConverted = true
 		}
 	}
-	if songConfig.mp3 && mp3ConvertNeeded(song.ConvertedSongFileName, uint8(songConfig.mp3Quality)) {
-		fmt.Println("quality different from last time, converting again ...", song.ConvertedSongFileName)
-		convertToMP3(song, songConfig.mp3Quality)
-	}
 
-	if coverConverted || forceCoverConvert {
+	if includeCover {
 		inputSong := song.OriginalSongFileName
 		if songConfig.mp3 {
 			inputSong = song.ConvertedSongFileName
@@ -274,24 +285,28 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 			"disposition:v": "attached_pic", // Mark video as attached picture
 			"metadata:s:v":  `title="Album cover"`,
 		}).OverWriteOutput().Run()
-		// ffmpeg.Concat().Output(, ffmpeg.KwArgs{"metadata:s:v": "title=\"Album cover\""}).Run()
-
-		// -map 0:0 \
-		// -map 1:0 \
-		// -c copy \
-		// -id3v2_version 3 \
-		// -metadata:s:v title="Album cover" \
-		// -metadata:s:v comment="Cover (front)" \
 	} else {
-		os.Link(song.ConvertedSongFileName, song.ConvertedSongWithCoverFileName)
+		os.RemoveAll(song.ConvertedSongWithCoverFileName)
+		err := os.Link(song.ConvertedSongFileName, song.ConvertedSongWithCoverFileName)
+		if err != nil {
+			fmt.Println("couldnt hard link file", song.ConvertedSongFileName)
+		}
 	}
-	return
-	// coverArtFileName2 := fmt.Sprintf("%s/%s.%s.%s", origDir, song.Title, song.Suffix, coverSuffix)
-	// ---
-
-	if songConfig.mp3 {
-		fmt.Println("do mp3 conversion here")
+	dynamicPadding := "%-" + strconv.FormatInt(longest_song_title+2, 10) + "s"
+	debriefString := fmt.Sprintf(dynamicPadding, song.Title)
+	if !debrief.Downloaded && !debrief.MP3Converted && !debrief.CoverConverted {
+		debriefString = fmt.Sprintf("%s nothing to do!", debriefString)
 	}
+	if debrief.Downloaded {
+		debriefString = fmt.Sprintf("%s downloaded", debriefString)
+	}
+	if debrief.MP3Converted {
+		debriefString = fmt.Sprintf("%s MP3-converted", debriefString)
+	}
+	if debrief.CoverConverted {
+		debriefString = fmt.Sprintf("%s cover-converted", debriefString)
+	}
+	fmt.Println(debriefString)
 }
 
 func main() {
@@ -411,6 +426,12 @@ func main() {
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, *concurrency)
+
+	for _, song := range result.Starred.Songs {
+		if int64(len(song.Title)) > longest_song_title {
+			longest_song_title = int64(len(song.Title))
+		}
+	}
 	for _, song := range result.Starred.Songs {
 		wg.Add(1)
 		go processSong(song, songConfig, &wg, sem)
