@@ -9,6 +9,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"strings"
 	"sync"
 
 	ffmpeg "github.com/u2takey/ffmpeg-go"
@@ -25,7 +26,7 @@ func getUrl(endpoint string, extraParams ...string) string {
 		extraString = fmt.Sprintf("%s&%s", extraString, param)
 	}
 	url := fmt.Sprintf("%s/%s?v=1.16.1&c=rocksonic&u=%s&p=%s%s", serverURL, endpoint, userName, userPassword, extraString)
-	fmt.Printf("%s/%s?v=1.16.1&c=rocksonic&u=%s&p=%s%s", serverURL, endpoint, userName, "*****", extraString)
+	// fmt.Printf("%s/%s?v=1.16.1&c=rocksonic&u=%s&p=%s%s\n", serverURL, endpoint, userName, "*****", extraString)
 	return url
 }
 
@@ -53,7 +54,7 @@ type SSResponse struct {
 func convertToMP3(song Song, quality uint) error {
 	err := ffmpeg.Input(song.OriginalSongFileName).Output(
 		song.ConvertedSongFileName,
-		ffmpeg.KwArgs{"vn": "", "q:a": quality, "map_metadata": 0, "id3v2_version": 3, "write_id3v1": 1, "write_id3v2": 1, "y": ""},
+		ffmpeg.KwArgs{"vn": "", "q:a": quality, "map_metadata": 0, "id3v2_version": 3, "write_id3v1": 1, "write_id3v2": 1, "metadata": fmt.Sprintf("rocksonic_quality=%d", quality), "y": ""},
 	).OverWriteOutput().Run()
 	if err != nil {
 		return errors.New(fmt.Sprint("error extracting cover from", song.OriginalSongFileName, err))
@@ -147,11 +148,19 @@ func downloadSong(song Song) error {
 
 type FFProbe struct {
 	Streams []Stream `json:"streams"`
+	Format  Format   `json:"format"`
+}
+type Format struct {
+	Tags Tags `json:"tags"`
+}
+type Tags struct {
+	RocksonicQuality string `json:"rocksonic_quality"`
 }
 type Stream struct {
 	Index     int    `json:"index"`
 	CodecType string `json:"codec_type"`
 	CodecName string `json:"codec_name"`
+	Width     uint16 `json:"width"`
 }
 
 type SongConfig struct {
@@ -166,23 +175,59 @@ type SongConfig struct {
 	mp3Quality        uint
 }
 
+func mp3ConvertNeeded(file string, newQuality uint8) bool {
+	_, err := os.Stat(file)
+	if err != nil {
+		return true
+	}
+
+	probeOutput, err := ffmpeg.Probe(file, []ffmpeg.KwArgs{{"show_format": ""}, {"print_format": "json"}}...)
+	var probe FFProbe
+	json.Unmarshal([]byte(probeOutput), &probe)
+	if err != nil {
+		return true
+	}
+	return probe.Format.Tags.RocksonicQuality != fmt.Sprintf("%d", newQuality)
+}
+
+func coverConvertNeeded(file string, newWidth uint16) bool {
+	_, err := os.Stat(file)
+	if err != nil {
+		return true
+	}
+
+	probeOutput, err := ffmpeg.Probe(file, []ffmpeg.KwArgs{{"select_streams": "v:0"}, {"of": "json"}}...)
+	var probe FFProbe
+	json.Unmarshal([]byte(probeOutput), &probe)
+	if err != nil {
+		return true
+	}
+
+	return probe.Streams[0].Width != newWidth
+}
+
 func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan struct{}) {
 	defer wg.Done()
 	sem <- struct{}{}
 	defer func() { <-sem }() // Release semaphore when done
 
+	song.Title = strings.ReplaceAll(song.Title, "/", "_")
+
 	song.OriginalSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.origSongDir, song.Title, song.Suffix)
 	song.ConvertedSongFileName = fmt.Sprintf("%s/%s.%s", songConfig.convertedSongDir, song.Title, "mp3")
 	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s.%s", songConfig.combinedSongDir, song.Title, "mp3")
 	info, err := os.Stat(song.OriginalSongFileName)
+	forceCoverConvert := false
 	if err != nil || info.Size() != song.Size {
 		fmt.Print("could not find song locally, ")
 		err = downloadSong(song)
+		forceCoverConvert = true
 		if err != nil {
 			fmt.Println("aborting download", err)
 			return
 		}
 	}
+
 	// move this to a function later
 	probeOutput, err := ffmpeg.Probe(song.OriginalSongFileName)
 	var probe FFProbe
@@ -199,17 +244,22 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 	if coverStream != nil {
 		song.OriginalCoverFileName = fmt.Sprintf("%s/%s.%s", songConfig.origCoverDir, song.Title, coverStream.CodecName)
 		song.ConvertedCoverFileName = fmt.Sprintf("%s/%s.%s", songConfig.convertedCoverDir, song.Title, coverStream.CodecName)
-		err = extractCover(song, *coverStream, uint(songConfig.coverSize))
-		if err == nil {
+		coverConvertNeeded := forceCoverConvert || coverConvertNeeded(song.ConvertedCoverFileName, uint16(songConfig.coverSize))
+		if coverConvertNeeded {
+			err = extractCover(song, *coverStream, uint(songConfig.coverSize))
+			if err == nil {
+				coverConverted = true
+			}
+		} else {
 			coverConverted = true
 		}
 	}
-
-	if songConfig.mp3 {
+	if songConfig.mp3 && mp3ConvertNeeded(song.ConvertedSongFileName, uint8(songConfig.mp3Quality)) {
+		fmt.Println("quality different from last time, converting again ...", song.ConvertedSongFileName)
 		convertToMP3(song, songConfig.mp3Quality)
 	}
 
-	if coverConverted {
+	if coverConverted || forceCoverConvert {
 		inputSong := song.OriginalSongFileName
 		if songConfig.mp3 {
 			inputSong = song.ConvertedSongFileName
@@ -233,7 +283,7 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 		// -metadata:s:v title="Album cover" \
 		// -metadata:s:v comment="Cover (front)" \
 	} else {
-		os.Rename(song.ConvertedSongFileName, song.ConvertedSongWithCoverFileName)
+		os.Link(song.ConvertedSongFileName, song.ConvertedSongWithCoverFileName)
 	}
 	return
 	// coverArtFileName2 := fmt.Sprintf("%s/%s.%s.%s", origDir, song.Title, song.Suffix, coverSuffix)
@@ -342,7 +392,7 @@ func main() {
 		mp3Quality:        *mp3Quality,
 	}
 
-	fmt.Println("welcome to rocksonic")
+	fmt.Println("Welcome to RockSonic!")
 
 	resp, err := http.Get(getUrl("getStarred"))
 	if err != nil {
@@ -361,23 +411,10 @@ func main() {
 
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, *concurrency)
-	skipCount := 0
 	for _, song := range result.Starred.Songs {
-		// fileName := fmt.Sprintf("./starred_music/%s.%s", song.Title, song.Suffix)
-		// if *mp3 {
-		// 	fileName = fmt.Sprintf("./starred_music/%s.mp3", song.Title)
-		// }
-		//
-		// info, err := os.Stat(fileName)
-		// if err == nil && info.Size() == (song.Size) {
-		// 	// fmt.Println("skipping, file has the same size", starred.Title, starred.Size)
-		// 	skipCount++
-		// 	continue
-		// }
 		wg.Add(1)
 		go processSong(song, songConfig, &wg, sem)
 	}
 	wg.Wait()
-	fmt.Printf("skipped %d files as they were already downloaded in correct encoding\n", skipCount)
 
 }
