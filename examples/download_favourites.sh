@@ -8,11 +8,11 @@
 # OPTIONAL STUFF, tells you the space used by your converted and/or covered songs, and the average bit_rate over 10 songs
 ###########
 
-echo "space on device used $(du -hs rocksonic_songs/converted/combined)"
+echo "space on device used $(du -hs rocksonic_songs/favs)"
 
 COUNT=0
 TOTAL=0
-for song in rocksonic_songs/converted/combined/*.mp3; do
+for song in rocksonic_songs/favs/*.mp3; do
   if [ $COUNT -gt 9 ]; then
     break
   fi
