@@ -34,6 +34,8 @@ func getUrl(endpoint string, extraParams ...string) string {
 
 type Song struct {
 	ID                             string `xml:"id,attr"`
+	Artist                         string `xml:"artist,attr"`
+	Track                          string `xml:"track,attr"`
 	Title                          string `xml:"title,attr"`
 	Album                          string `xml:"album,attr"`
 	Suffix                         string `xml:"suffix,attr"`
@@ -197,6 +199,7 @@ type Stream struct {
 
 type SongConfig struct {
 	mp3               bool
+	flat              bool
 	coverSize         uint
 	convertedDir      string
 	convertedSongDir  string
@@ -224,7 +227,13 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 
 	song.OriginalSongFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.origSongDir, song.Album, song.Title, song.Suffix)
 	song.ConvertedSongFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.convertedSongDir, song.Album, song.Title, "mp3")
+
 	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.combinedSongDir, song.Album, song.Title, "mp3")
+	if !songConfig.flat {
+		os.MkdirAll(fmt.Sprintf("%s/%s/%s", songConfig.combinedSongDir, song.Artist, song.Album), os.ModePerm)
+		song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%s %s.%s", songConfig.combinedSongDir, song.Artist, song.Album, song.Track, song.Title, "mp3")
+	}
+
 	info, err := os.Stat(song.OriginalSongFileName)
 
 	if err != nil || info.Size() != song.Size {
@@ -311,6 +320,7 @@ func main() {
 	concurrency := flag.Int("concurrency", 5, "set how many tasks run at the same time")
 	coverSize := flag.Uint("coversize", 150, "set coverart size to <coversize>x<coversize>")
 	dir := flag.String("dir", "./rocksonic_songs", "the folder where rocksonic can work with and save songs")
+	flat := flag.Bool("flat", false, "don't create a folder structure, put everything into one folder")
 	mp3 := flag.Bool("mp3", false, "compress everything to 320kbps mp3")
 	mp3Quality := flag.Uint("quality", 2, "only has an effect when converting to mp3. sets the mp3 quality. 0=best but largest 9=worst but smallest")
 	subsonicUrl := flag.String("url", "nourl", "the full url to the subsonic api like http://my.subsonic.com/rest")
@@ -427,6 +437,7 @@ func main() {
 
 	songConfig := SongConfig{
 		mp3:               *mp3,
+		flat:              *flat,
 		coverSize:         *coverSize,
 		convertedDir:      convertedDir,
 		convertedSongDir:  convertedSongDir,
@@ -448,6 +459,7 @@ func main() {
 	for _, song := range songs {
 		wg.Add(1)
 		go processSong(song, songConfig, &wg, sem, deb)
+		// fmt.Printf("%s -> %s -> %3s. %s\n", song.Artist, song.Album, song.Track, song.Title)
 	}
 	for i := 0; i < len(songs); i++ {
 		debStr := <-deb
