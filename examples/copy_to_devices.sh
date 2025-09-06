@@ -37,8 +37,8 @@ MOUNT=$(echo "$UDISKOUTPUT" | awk -F'at ' '{print $2}' | sed 's/\.$//' | sed "s/
 
 # only update the existing files first, so we can sync smaller files and make some space
 # we are copying the favs folder here, you need to change that if you selected a playlist instead of favs
-rsync -rh ./rocksonic_songs/favs/ "$MOUNT/rocksonic/" --delete --update --size-only --info=progress2 --existing
-rsync -rh ./rocksonic_songs/favs/ "$MOUNT/rocksonic/" --delete --update --size-only --info=progress2 --ignore-existing
+rsync -rh "$1" "$MOUNT/rocksonic/" --delete --update --size-only --info=progress2 --existing
+rsync -rh "$1" "$MOUNT/rocksonic/" --delete --update --size-only --info=progress2 --ignore-existing
 sync
 DEVICE=$(findmnt -n -o SOURCE "$MOUNT")
 udisksctl unmount -b "$DEVICE"

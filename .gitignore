@@ -5,5 +5,4 @@
 *.sh
 main
 rocksonic_songs
-!copy_to_devices.sh
-!download_favourites.sh
+!examples/*.sh
