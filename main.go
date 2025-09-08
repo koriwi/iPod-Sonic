@@ -130,7 +130,6 @@ func extractCover(song Song, coverStream Stream, coverSize uint) error {
 }
 
 func downloadSong(song Song) error {
-	// fmt.Println("Downloading", song.Album, song.Title)
 
 	url := getUrl("download", "id="+string(song.ID))
 	resp, err := http.Get(url)
@@ -277,8 +276,12 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 			panic(err)
 		}
 		os.MkdirAll(fmt.Sprintf("%s/%s/%s", songConfig.combinedSongDir, albumResult.Album.Artist, song.Album), os.ModePerm)
-		song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%s %s.%s", songConfig.combinedSongDir, albumResult.Album.Artist, song.Album, song.Track, song.Title, "mp3")
-		song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%s %s.%s", songConfig.combinedSongDir, albumResult.Album.Artist, song.Album, song.Track, song.Title, song.Suffix)
+		track, err := strconv.ParseUint(song.Track, 10, 64)
+		if err != nil {
+			track = 0
+		}
+		song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", songConfig.combinedSongDir, albumResult.Album.Artist, song.Album, track, song.Title, "mp3")
+		song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", songConfig.combinedSongDir, albumResult.Album.Artist, song.Album, track, song.Title, song.Suffix)
 	}
 
 	info, err := os.Stat(song.OriginalSongFileName)
