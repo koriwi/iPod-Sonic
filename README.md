@@ -22,5 +22,10 @@ You can run --help to get up to date information on the cli parameters.
 ## Upcoming features
 
 - Build system so you can just download it and don't have to compile it yourself
-- Select the playlist to synch
-- Choose between flat and nested folder structure
+- Select the playlist to synch (DONE)
+- Choose between flat and nested folder structure (DONE)
+
+## TODO
+
+- split into modules
+- sanitize file names for FAT32
