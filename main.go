@@ -6,7 +6,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
-	utils "iPodSonic/sync/lib"
+	"iPodSonic/lib"
 	"io"
 	"net/http"
 	"os"
@@ -18,55 +18,6 @@ import (
 )
 
 var longest_song_title int64 = 0
-var serverURL = ""
-var userName = ""
-var userPassword = ""
-
-func getUrl(endpoint string, extraParams ...string) string {
-	extraString := ""
-	for _, param := range extraParams {
-		extraString = fmt.Sprintf("%s&%s", extraString, param)
-	}
-	url := fmt.Sprintf("%s/%s?v=1.16.1&c=rocksonic&u=%s&p=%s%s", serverURL, endpoint, userName, userPassword, extraString)
-	// fmt.Printf("%s/%s?v=1.16.1&c=rocksonic&u=%s&p=%s%s\n", serverURL, endpoint, userName, "*****", extraString)
-	return url
-}
-
-type Song struct {
-	ID                             string `xml:"id,attr"`
-	Artist                         string `xml:"artist,attr"`
-	Track                          string `xml:"track,attr"`
-	Title                          string `xml:"title,attr"`
-	Album                          string `xml:"album,attr"`
-	AlbumID                        string `xml:"albumId,attr"`
-	Suffix                         string `xml:"suffix,attr"`
-	Size                           int64  `xml:"size,attr"`
-	OriginalSongFileName           string
-	OriginalCoverFileName          string
-	OriginalSongWithCoverFileName  string
-	ConvertedSongFileName          string
-	ConvertedCoverFileName         string
-	ConvertedSongWithCoverFileName string
-}
-type Starred struct {
-	XMLName xml.Name `xml:"starred"`
-	Songs   []Song   `xml:"song"`
-}
-type Playlist struct {
-	XMLName xml.Name `xml:"playlist"`
-	Name    string   `xml:"name,attr"`
-	Songs   []Song   `xml:"entry"`
-}
-type Album struct {
-	XMLName xml.Name `xml:"album"`
-	Artist  string   `xml:"artist,attr"`
-}
-type SSResponse struct {
-	XMLName  xml.Name `xml:"subsonic-response"`
-	Starred  Starred
-	Playlist Playlist
-	Album    Album
-}
 
 func convertToMP3(song Song, quality uint) error {
 	err := ffmpeg.Input(song.OriginalSongFileName).Output(
@@ -131,7 +82,7 @@ func extractCover(song Song, coverStream Stream, coverSize uint) error {
 
 func downloadSong(song Song) error {
 
-	url := getUrl("download", "id="+string(song.ID))
+	url := lib.GetUrl("download", "id="+string(song.ID))
 	resp, err := http.Get(url)
 	if err != nil {
 		fmt.Println("could not download", song.Title)
@@ -233,16 +184,10 @@ type Stream struct {
 }
 
 type SongConfig struct {
-	mp3               bool
-	flat              bool
-	coverSize         uint
-	convertedDir      string
-	convertedSongDir  string
-	combinedSongDir   string
-	origCoverDir      string
-	origSongDir       string
-	convertedCoverDir string
-	mp3Quality        uint
+	mp3        bool
+	flat       bool
+	coverSize  uint
+	mp3Quality uint
 }
 type Debrief struct {
 	Downloaded     bool
@@ -250,7 +195,7 @@ type Debrief struct {
 	MP3Converted   bool
 }
 
-func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan struct{}, deb chan string) {
+func processSong(song lib.Song, songConfig SongConfig, dirs lib.Directories, wg *sync.WaitGroup, sem chan struct{}, deb chan string) {
 	var debrief Debrief
 	var debriefString string
 	defer wg.Done()
@@ -258,31 +203,24 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 	sem <- struct{}{}
 	defer func() { <-sem }() // Release semaphore when done
 
-	song.Title = utils.SanitizeFAT32Filename(song.Title)
-	song.Album = utils.SanitizeFAT32Filename(song.Album)
+	song.Title = lib.SanitizeFAT32Filename(song.Title)
+	song.Album = lib.SanitizeFAT32Filename(song.Album)
 
-	song.OriginalSongFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.origSongDir, song.Album, song.Title, song.Suffix)
-	song.ConvertedSongFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.convertedSongDir, song.Album, song.Title, "mp3")
+	song.OriginalSongFileName = fmt.Sprintf("%s/%s %s.%s", dirs.OrigSongDir, song.Album, song.Title, song.Suffix)
+	song.ConvertedSongFileName = fmt.Sprintf("%s/%s %s.%s", dirs.ConvertedSongDir, song.Album, song.Title, "mp3")
 
-	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.combinedSongDir, song.Album, song.Title, "mp3")
-	song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.combinedSongDir, song.Album, song.Title, song.Suffix)
+	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.CombinedSongDir, song.Album, song.Title, "mp3")
+	song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.CombinedSongDir, song.Album, song.Title, song.Suffix)
+
 	if !songConfig.flat {
-		var resp *http.Response
-		resp, err := http.Get(getUrl("getAlbum", fmt.Sprintf("id=%s", song.AlbumID)))
-		var albumResult SSResponse
-
-		err = xml.NewDecoder(resp.Body).Decode(&albumResult)
-		if err != nil {
-			fmt.Println(err)
-			panic(err)
-		}
-		os.MkdirAll(fmt.Sprintf("%s/%s/%s", songConfig.combinedSongDir, albumResult.Album.Artist, song.Album), os.ModePerm)
+		album, err := lib.GetAlbum(song.AlbumID)
+		os.MkdirAll(fmt.Sprintf("%s/%s/%s", dirs.CombinedSongDir, album.Artist, song.Album), os.ModePerm)
 		track, err := strconv.ParseUint(song.Track, 10, 64)
 		if err != nil {
 			track = 0
 		}
-		song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", songConfig.combinedSongDir, albumResult.Album.Artist, song.Album, track, song.Title, "mp3")
-		song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", songConfig.combinedSongDir, albumResult.Album.Artist, song.Album, track, song.Title, song.Suffix)
+		song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", dirs.CombinedSongDir, album.Artist, song.Album, track, song.Title, "mp3")
+		song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", dirs.CombinedSongDir, album.Artist, song.Album, track, song.Title, song.Suffix)
 	}
 
 	info, err := os.Stat(song.OriginalSongFileName)
@@ -376,113 +314,39 @@ func main() {
 		fmt.Println("no -pass found")
 		return
 	}
-	serverURL = *subsonicUrl
-	userName = *userNameFlag
-	userPassword = *passwordFlag
+	lib.SetServer(*subsonicUrl, *userNameFlag, *passwordFlag)
 
 	ffmpeg.LogCompiledCommand = false
 	magick.Initialize()
 	defer magick.Terminate()
 
-	err := os.MkdirAll(*dir, os.ModePerm)
-	if err != nil {
-		panic(err)
-	}
+	var err error
 
 	fmt.Println("Welcome to RockSonic!")
-	var resp *http.Response
+	var songs []lib.Song
+	var playlistName string
+
 	if *playList != "nolist" {
-		resp, err = http.Get(getUrl("getPlaylist", fmt.Sprintf("id=%s", *playList)))
+		songs, playlistName, err = lib.GetPlaylist(*playList)
 	} else {
-		resp, err = http.Get(getUrl("getStarred"))
+		songs, err = lib.GetStarred()
+		playlistName = "favs"
 	}
 	if err != nil {
 		panic(err)
 	}
 
-	defer resp.Body.Close()
+	dirs, err := lib.MakeDirs(*dir, playlistName, *mp3)
 
-	var result SSResponse
-
-	err = xml.NewDecoder(resp.Body).Decode(&result)
 	if err != nil {
-		fmt.Println(err)
-		panic(err)
-	}
-	songs := result.Starred.Songs
-	if *playList != "nolist" {
-		songs = result.Playlist.Songs
-	}
-
-	origDir := fmt.Sprintf("%s/.original", *dir)
-	err = os.MkdirAll(origDir, os.ModePerm)
-	if err != nil {
-		fmt.Println("could not create original directory", err)
-		panic(err)
-	}
-
-	convertedDir := fmt.Sprintf("%s/.converted", *dir)
-	err = os.MkdirAll(convertedDir, os.ModePerm)
-	if err != nil {
-		fmt.Println("could not create converted directory", err)
-		panic(err)
-	}
-
-	convertedSongDir := fmt.Sprintf("%s/songs", convertedDir)
-	err = os.MkdirAll(convertedSongDir, os.ModePerm)
-	if err != nil {
-		fmt.Println("could not create converted songs directory", err)
-		panic(err)
-	}
-
-	combinedSongDir := fmt.Sprintf("%s/", *dir)
-	if *playList != "nolist" {
-		sanitized := utils.SanitizeFAT32Filename(result.Playlist.Name)
-		combinedSongDir = fmt.Sprintf("%s/%s", combinedSongDir, sanitized)
-	} else {
-		combinedSongDir = fmt.Sprintf("%s/favs", combinedSongDir)
-	}
-	if *mp3 {
-		combinedSongDir = fmt.Sprintf("%s_mp3", combinedSongDir)
-	}
-	err = os.MkdirAll(combinedSongDir, os.ModePerm)
-	if err != nil {
-		fmt.Println("could not create converted songs directory", err)
-		panic(err)
-	}
-
-	origSongDir := fmt.Sprintf("%s/songs", origDir)
-	err = os.MkdirAll(origSongDir, os.ModePerm)
-	if err != nil {
-		fmt.Println("could not create original songs directory", err)
-		panic(err)
-	}
-
-	origCoverDir := fmt.Sprintf("%s/covers", origDir)
-	err = os.MkdirAll(origCoverDir, os.ModePerm)
-	if err != nil {
-		fmt.Println("could not create original cover directory", err)
-		panic(err)
-	}
-
-	convertedCoverDir := fmt.Sprintf("%s/covers", convertedDir)
-	err = os.MkdirAll(convertedCoverDir, os.ModePerm)
-	if err != nil {
-		fmt.Println("could not create converted cover directory", err)
 		panic(err)
 	}
 
 	songConfig := SongConfig{
-		mp3:               *mp3,
-		flat:              *flat,
-		coverSize:         *coverSize,
-		convertedDir:      convertedDir,
-		convertedSongDir:  convertedSongDir,
-		combinedSongDir:   combinedSongDir,
-		origCoverDir:      origCoverDir,
-		origSongDir:       origSongDir,
-		convertedCoverDir: convertedCoverDir,
-		mp3Quality:        *mp3Quality,
+		mp3:        *mp3,
+		flat:       *flat,
+		coverSize:  *coverSize,
+		mp3Quality: *mp3Quality,
 	}
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, *concurrency)
@@ -497,7 +361,7 @@ func main() {
 	for _, song := range songs {
 
 		wg.Add(1)
-		go processSong(song, songConfig, &wg, sem, deb)
+		go processSong(song, songConfig, dirs, &wg, sem, deb)
 		// fmt.Printf("%s -> %s -> %3s. %s\n", song.Artist, song.Album, song.Track, song.Title)
 	}
 	for i := 0; i < len(songs); i++ {
@@ -505,5 +369,5 @@ func main() {
 		fmt.Printf("%6d/%d %s\n", i+1, len(songs), debStr)
 	}
 	wg.Wait()
-	fmt.Println(combinedSongDir)
+	fmt.Println(dirs.ConvertedSongDir)
 }

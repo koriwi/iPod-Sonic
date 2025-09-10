@@ -1,4 +1,4 @@
-module iPodSonic/sync
+module iPodSonic
 
 go 1.24
 
