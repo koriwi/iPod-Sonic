@@ -6,3 +6,4 @@
 main
 rocksonic_songs
 !examples/*.sh
+music.db

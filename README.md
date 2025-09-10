@@ -29,3 +29,4 @@ You can run --help to get up to date information on the cli parameters.
 
 - split into modules
 - sanitize file names for FAT32
+- remove removed songs from updated output folder

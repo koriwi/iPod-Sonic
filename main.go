@@ -6,11 +6,11 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	utils "iPodSonic/sync/lib"
 	"io"
 	"net/http"
 	"os"
 	"strconv"
-	"strings"
 	"sync"
 
 	ffmpeg "github.com/u2takey/ffmpeg-go"
@@ -258,7 +258,8 @@ func processSong(song Song, songConfig SongConfig, wg *sync.WaitGroup, sem chan 
 	sem <- struct{}{}
 	defer func() { <-sem }() // Release semaphore when done
 
-	song.Title = strings.ReplaceAll(song.Title, "/", "_")
+	song.Title = utils.SanitizeFAT32Filename(song.Title)
+	song.Album = utils.SanitizeFAT32Filename(song.Album)
 
 	song.OriginalSongFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.origSongDir, song.Album, song.Title, song.Suffix)
 	song.ConvertedSongFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.convertedSongDir, song.Album, song.Title, "mp3")
@@ -439,7 +440,7 @@ func main() {
 	}
 	combinedSongDir := fmt.Sprintf("%s/", *dir)
 	if *playList != "nolist" {
-		sanitized := strings.ReplaceAll(result.Playlist.Name, "/", "_")
+		sanitized := utils.SanitizeFAT32Filename(result.Playlist.Name)
 		combinedSongDir = fmt.Sprintf("%s/%s", combinedSongDir, sanitized)
 	} else {
 		combinedSongDir = fmt.Sprintf("%s/favs", combinedSongDir)
