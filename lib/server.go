@@ -2,8 +2,11 @@ package lib
 
 import (
 	"encoding/xml"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"os"
 )
 
 var serverURL = ""
@@ -103,7 +106,29 @@ func GetPlaylist(playlist string) ([]Song, string, error) {
 	}
 	return result.Playlist.Songs, result.Playlist.Name, nil
 }
+func DownloadSong(song Song) error {
 
+	url := GetUrl("download", "id="+string(song.ID))
+	resp, err := http.Get(url)
+	if err != nil {
+		fmt.Println("could not download", song.Title)
+		return errors.New("could not download " + song.Title + "\n" + err.Error())
+	}
+	defer resp.Body.Close()
+
+	out, err := os.Create(song.OriginalSongFileName)
+	if err != nil {
+		// fmt.Println("file already exists", song.Title)
+		return errors.New("could not create file " + song.Title + "\n" + err.Error())
+	}
+
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		fmt.Println("could not save to file", song.Title)
+		return errors.New("could not save to file " + song.Title + "\n" + err.Error())
+	}
+	return nil
+}
 func SetServer(url string, username string, password string) {
 	serverURL = url
 	serverUser = username

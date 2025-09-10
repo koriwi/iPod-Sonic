@@ -2,107 +2,17 @@ package main
 
 import (
 	"encoding/json"
-	"encoding/xml"
-	"errors"
 	"flag"
 	"fmt"
 	"iPodSonic/lib"
-	"io"
-	"net/http"
 	"os"
 	"strconv"
 	"sync"
 
 	ffmpeg "github.com/u2takey/ffmpeg-go"
-	magick "gopkg.in/gographics/imagick.v3/imagick"
 )
 
 var longest_song_title int64 = 0
-
-func convertToMP3(song Song, quality uint) error {
-	err := ffmpeg.Input(song.OriginalSongFileName).Output(
-		song.ConvertedSongFileName,
-		ffmpeg.KwArgs{"vn": "", "q:a": quality, "map_metadata": 0, "id3v2_version": 3, "write_id3v1": 1, "write_id3v2": 1, "metadata": fmt.Sprintf("rocksonic_quality=%d", quality), "y": ""},
-	).OverWriteOutput().Run()
-	if err != nil {
-		return errors.New(fmt.Sprint("error extracting cover from", song.OriginalSongFileName, err))
-	}
-
-	return nil
-}
-
-func extractCover(song Song, coverStream Stream, coverSize uint) error {
-
-	err := ffmpeg.Input(song.OriginalSongFileName).Output(
-		song.OriginalCoverFileName,
-		ffmpeg.KwArgs{"an": "", "update": 1, "pix_fmt": "yuvj420p", "color_range": "full", "colorspace": "bt470bg"},
-	).OverWriteOutput().Run()
-	if err != nil {
-		return errors.New(fmt.Sprint("error extracting cover from", song.OriginalSongFileName, err))
-	}
-
-	mw := magick.NewMagickWand()
-	defer mw.Destroy()
-	err = mw.ReadImage(song.OriginalCoverFileName)
-	if err != nil {
-		return errors.New(fmt.Sprint("error reading extracted cover file", song.OriginalCoverFileName, err))
-	}
-
-	aspectRatio := float32(mw.GetImageWidth()) / float32(mw.GetImageHeight())
-	var width = coverSize
-	var height = uint(float32(coverSize) * aspectRatio)
-
-	err = mw.ResizeImage(width, height, magick.FILTER_LANCZOS)
-	if err != nil {
-		return errors.New(fmt.Sprint("error resizing cover file", song.OriginalCoverFileName, err))
-	}
-
-	err = mw.SetImageCompressionQuality(75)
-	if err != nil {
-		return errors.New(fmt.Sprint("error compressing cover file", song.OriginalCoverFileName, err))
-	}
-
-	err = mw.StripImage()
-	if err != nil {
-		return errors.New(fmt.Sprint("error stripping cover file", song.OriginalCoverFileName, err))
-	}
-
-	err = mw.SetInterlaceScheme(magick.INTERLACE_NO)
-	if err != nil {
-		return errors.New(fmt.Sprint("error disabling interlace for cover file", song.OriginalCoverFileName, err))
-	}
-
-	err = mw.WriteImage(song.ConvertedCoverFileName)
-	if err != nil {
-		return errors.New(fmt.Sprint("error saving cover file", song.ConvertedCoverFileName, err))
-	}
-
-	return nil
-}
-
-func downloadSong(song Song) error {
-
-	url := lib.GetUrl("download", "id="+string(song.ID))
-	resp, err := http.Get(url)
-	if err != nil {
-		fmt.Println("could not download", song.Title)
-		return errors.New("could not download " + song.Title + "\n" + err.Error())
-	}
-	defer resp.Body.Close()
-
-	out, err := os.Create(song.OriginalSongFileName)
-	if err != nil {
-		// fmt.Println("file already exists", song.Title)
-		return errors.New("could not create file " + song.Title + "\n" + err.Error())
-	}
-
-	_, err = io.Copy(out, resp.Body)
-	if err != nil {
-		fmt.Println("could not save to file", song.Title)
-		return errors.New("could not save to file " + song.Title + "\n" + err.Error())
-	}
-	return nil
-}
 
 type FFProbe struct {
 	Streams []Stream `json:"streams"`
@@ -147,8 +57,7 @@ func coverConvertNeeded(file string, newWidth uint16) bool {
 	return probe.Streams[0].Width != newWidth
 }
 
-func processCover(song *Song, songConfig *SongConfig, debrief *Debrief) bool {
-	// move this to a function later
+func processCover(song *lib.Song, songConfig *SongConfig, dirs *lib.Directories, debrief *Debrief) bool {
 	probeOutput, err := ffmpeg.Probe(song.OriginalSongFileName)
 	var probe FFProbe
 	json.Unmarshal([]byte(probeOutput), &probe)
@@ -161,11 +70,11 @@ func processCover(song *Song, songConfig *SongConfig, debrief *Debrief) bool {
 		}
 	}
 	if coverStream != nil {
-		song.OriginalCoverFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.origCoverDir, song.Album, song.Title, coverStream.CodecName)
-		song.ConvertedCoverFileName = fmt.Sprintf("%s/%s %s.%s", songConfig.convertedCoverDir, song.Album, song.Title, coverStream.CodecName)
+		song.OriginalCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.OrigCoverDir, song.Album, song.Title, coverStream.CodecName)
+		song.ConvertedCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.ConvertedCoverDir, song.Album, song.Title, coverStream.CodecName)
 		coverConvertNeeded := coverConvertNeeded(song.ConvertedCoverFileName, uint16(songConfig.coverSize))
 		if coverConvertNeeded {
-			err = extractCover(*song, *coverStream, uint(songConfig.coverSize))
+			err = lib.ExtractCover(*song, uint(songConfig.coverSize))
 			if err != nil {
 				return false
 			}
@@ -226,7 +135,7 @@ func processSong(song lib.Song, songConfig SongConfig, dirs lib.Directories, wg 
 	info, err := os.Stat(song.OriginalSongFileName)
 
 	if err != nil || info.Size() != song.Size {
-		err = downloadSong(song)
+		err = lib.DownloadSong(song)
 		debrief.Downloaded = true
 		if err != nil {
 			fmt.Println("aborting download", err)
@@ -236,10 +145,10 @@ func processSong(song lib.Song, songConfig SongConfig, dirs lib.Directories, wg 
 
 	if songConfig.mp3 && mp3ConvertNeeded(song.ConvertedSongFileName, uint8(songConfig.mp3Quality)) {
 		debrief.MP3Converted = true
-		convertToMP3(song, songConfig.mp3Quality)
+		lib.ConvertToMP3(song, songConfig.mp3Quality)
 	}
 
-	hasCover := processCover(&song, &songConfig, &debrief)
+	hasCover := processCover(&song, &songConfig, &dirs, &debrief)
 	if hasCover {
 		inputSong := song.OriginalSongFileName
 		outputSong := song.OriginalSongWithCoverFileName
@@ -317,8 +226,9 @@ func main() {
 	lib.SetServer(*subsonicUrl, *userNameFlag, *passwordFlag)
 
 	ffmpeg.LogCompiledCommand = false
-	magick.Initialize()
-	defer magick.Terminate()
+
+	lib.InitMagick()
+	defer lib.TerminateMagick()
 
 	var err error
 
