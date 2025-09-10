@@ -435,15 +435,15 @@ func main() {
 		panic(err)
 	}
 
-	if *mp3 {
-		result.Playlist.Name = fmt.Sprintf("%s_mp3", result.Playlist.Name)
-	}
 	combinedSongDir := fmt.Sprintf("%s/", *dir)
 	if *playList != "nolist" {
 		sanitized := utils.SanitizeFAT32Filename(result.Playlist.Name)
 		combinedSongDir = fmt.Sprintf("%s/%s", combinedSongDir, sanitized)
 	} else {
 		combinedSongDir = fmt.Sprintf("%s/favs", combinedSongDir)
+	}
+	if *mp3 {
+		combinedSongDir = fmt.Sprintf("%s_mp3", combinedSongDir)
 	}
 	err = os.MkdirAll(combinedSongDir, os.ModePerm)
 	if err != nil {
