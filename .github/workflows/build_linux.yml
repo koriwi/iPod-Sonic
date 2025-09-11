@@ -21,8 +21,19 @@ jobs:
       - name: install dependencies
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg libmagickwand-dev libmagickcore-dev build-essential pkg-config
-          echo "Installing ImageMagick 7 from source..."
+          sudo apt install -y ffmpeg build-essential pkg-config
+
+      - name: Cache ImageMagick build
+        uses: actions/cache@v4
+        id: imagemagick-build-cache
+        with:
+          path: /usr/local
+          key: ${{ runner.os }}-imagemagick-7.1.1-29-build
+
+      - name: Download and build ImageMagick 7 (if not cached)
+        if: steps.imagemagick-build-cache.outputs.cache-hit != 'true'
+        run: |
+          echo "Building ImageMagick 7 from source..."
           wget https://github.com/ImageMagick/ImageMagick/archive/7.1.1-29.tar.gz
           tar xzf 7.1.1-29.tar.gz
           cd ImageMagick-7.1.1-29
@@ -39,13 +50,13 @@ jobs:
 
           make -j$(nproc)
           sudo make install
-          sudo ldconfig
-
-          # Update pkg-config path
-          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
-          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
-
           cd ..
+
+      - name: Set up ImageMagick environment
+        run: |
+          sudo ldconfig
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+
       - uses: actions/checkout@v4
       - name: Build
         run: go build -x -v ./rocksonic.go
@@ -108,7 +119,7 @@ jobs:
           git push origin latest
 
           gh release create latest \
-            --title "Latest Build - $BUILD_DATE ($SHORT_SHA)" \
+            --title "Latest Build" \
             --notes "Built from commit $SHORT_SHA on $BUILD_DATE" \
             --latest \
             rocksonic \
