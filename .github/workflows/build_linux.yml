@@ -30,7 +30,7 @@ jobs:
           ffmpeg -version
           echo "PATH: $PATH"
       - name: Build
-        run: go build -x -v ./main.go || true
+        run: go build -x -v ./main.go
         env:
           CGO_ENABLED: 1
       - name: pwd
