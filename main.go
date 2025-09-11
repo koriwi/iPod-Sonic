@@ -1,7 +1,6 @@
 package main
 
 import (
-	"encoding/json"
 	"flag"
 	"fmt"
 	"iPodSonic/lib"
@@ -14,67 +13,14 @@ import (
 
 var longest_song_title int64 = 0
 
-type FFProbe struct {
-	Streams []Stream `json:"streams"`
-	Format  Format   `json:"format"`
-}
-type Format struct {
-	Tags Tags `json:"tags"`
-}
-type Tags struct {
-	RocksonicQuality string `json:"rocksonic_quality"`
-}
-
-func mp3ConvertNeeded(file string, newQuality uint8) bool {
-	_, err := os.Stat(file)
-	if err != nil {
-		return true
-	}
-
-	probeOutput, err := ffmpeg.Probe(file, []ffmpeg.KwArgs{{"show_format": ""}, {"print_format": "json"}}...)
-	var probe FFProbe
-	json.Unmarshal([]byte(probeOutput), &probe)
-	if err != nil {
-		return true
-	}
-	// fmt.Printf("%-100s %s %d\n", file, probe.Format.Tags.RocksonicQuality, newQuality)
-	return probe.Format.Tags.RocksonicQuality != fmt.Sprintf("%d", newQuality)
-}
-
-func coverConvertNeeded(file string, newWidth uint16) bool {
-	_, err := os.Stat(file)
-	if err != nil {
-		return true
-	}
-
-	probeOutput, err := ffmpeg.Probe(file, []ffmpeg.KwArgs{{"select_streams": "v:0"}, {"of": "json"}}...)
-	var probe FFProbe
-	json.Unmarshal([]byte(probeOutput), &probe)
-	if err != nil {
-		return true
-	}
-
-	return probe.Streams[0].Width != newWidth
-}
-
-func processCover(song *lib.Song, songConfig *SongConfig, dirs *lib.Directories, debrief *Debrief) bool {
-	probeOutput, err := ffmpeg.Probe(song.OriginalSongFileName)
-	var probe FFProbe
-	json.Unmarshal([]byte(probeOutput), &probe)
-
-	var coverStream *Stream
-	for _, stream := range probe.Streams {
-		if stream.CodecType == "video" {
-			coverStream = &stream
-			break
-		}
-	}
+func processCover(song *lib.Song, coverSize uint16, dirs *lib.Directories, debrief *Debrief) bool {
+	coverStream, err := lib.HasCover(song.OriginalSongFileName)
 	if coverStream != nil {
 		song.OriginalCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.OrigCoverDir, song.Album, song.Title, coverStream.CodecName)
 		song.ConvertedCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.ConvertedCoverDir, song.Album, song.Title, coverStream.CodecName)
-		coverConvertNeeded := coverConvertNeeded(song.ConvertedCoverFileName, uint16(songConfig.coverSize))
+		coverConvertNeeded := lib.CoverConvertNeeded(song.ConvertedCoverFileName, uint16(coverSize))
 		if coverConvertNeeded {
-			err = lib.ExtractCover(*song, uint(songConfig.coverSize))
+			err = lib.ExtractCover(*song, uint(coverSize))
 			if err != nil {
 				return false
 			}
@@ -83,13 +29,6 @@ func processCover(song *lib.Song, songConfig *SongConfig, dirs *lib.Directories,
 		return true
 	}
 	return false
-}
-
-type Stream struct {
-	Index     int    `json:"index"`
-	CodecType string `json:"codec_type"`
-	CodecName string `json:"codec_name"`
-	Width     uint16 `json:"width"`
 }
 
 type SongConfig struct {
@@ -112,24 +51,25 @@ func processSong(song lib.Song, songConfig SongConfig, dirs lib.Directories, wg 
 	sem <- struct{}{}
 	defer func() { <-sem }() // Release semaphore when done
 
-	song.Title = lib.SanitizeFAT32Filename(song.Title)
-	song.Album = lib.SanitizeFAT32Filename(song.Album)
+	songTitle := lib.SanitizeFAT32Filename(song.Title)
+	albumTitle := lib.SanitizeFAT32Filename(song.Album)
 
-	song.OriginalSongFileName = fmt.Sprintf("%s/%s %s.%s", dirs.OrigSongDir, song.Album, song.Title, song.Suffix)
-	song.ConvertedSongFileName = fmt.Sprintf("%s/%s %s.%s", dirs.ConvertedSongDir, song.Album, song.Title, "mp3")
+	song.OriginalSongFileName = fmt.Sprintf("%s/%s %s.%s", dirs.OrigSongDir, albumTitle, songTitle, song.Suffix)
+	song.ConvertedSongFileName = fmt.Sprintf("%s/%s %s.%s", dirs.ConvertedSongDir, albumTitle, songTitle, "mp3")
 
-	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.CombinedSongDir, song.Album, song.Title, "mp3")
-	song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.CombinedSongDir, song.Album, song.Title, song.Suffix)
+	song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.CombinedSongDir, albumTitle, songTitle, "mp3")
+	song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s %s.%s", dirs.CombinedSongDir, albumTitle, songTitle, song.Suffix)
 
 	if !songConfig.flat {
 		album, err := lib.GetAlbum(song.AlbumID)
+		albumArtist := lib.SanitizeFAT32Filename(album.Artist)
 		os.MkdirAll(fmt.Sprintf("%s/%s/%s", dirs.CombinedSongDir, album.Artist, song.Album), os.ModePerm)
 		track, err := strconv.ParseUint(song.Track, 10, 64)
 		if err != nil {
 			track = 0
 		}
-		song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", dirs.CombinedSongDir, album.Artist, song.Album, track, song.Title, "mp3")
-		song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", dirs.CombinedSongDir, album.Artist, song.Album, track, song.Title, song.Suffix)
+		song.ConvertedSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", dirs.CombinedSongDir, albumArtist, albumTitle, track, songTitle, "mp3")
+		song.OriginalSongWithCoverFileName = fmt.Sprintf("%s/%s/%s/%03d %s.%s", dirs.CombinedSongDir, albumArtist, albumTitle, track, songTitle, song.Suffix)
 	}
 
 	info, err := os.Stat(song.OriginalSongFileName)
@@ -143,12 +83,12 @@ func processSong(song lib.Song, songConfig SongConfig, dirs lib.Directories, wg 
 		}
 	}
 
-	if songConfig.mp3 && mp3ConvertNeeded(song.ConvertedSongFileName, uint8(songConfig.mp3Quality)) {
+	if songConfig.mp3 && lib.MP3ConvertNeeded(song.ConvertedSongFileName, uint8(songConfig.mp3Quality)) {
 		debrief.MP3Converted = true
 		lib.ConvertToMP3(song, songConfig.mp3Quality)
 	}
 
-	hasCover := processCover(&song, &songConfig, &dirs, &debrief)
+	hasCover := processCover(&song, uint16(songConfig.coverSize), &dirs, &debrief)
 	if hasCover {
 		inputSong := song.OriginalSongFileName
 		outputSong := song.OriginalSongWithCoverFileName
@@ -181,6 +121,7 @@ func processSong(song lib.Song, songConfig SongConfig, dirs lib.Directories, wg 
 			}
 		}
 	}
+
 	dynamicPadding := "%-" + strconv.FormatInt(longest_song_title+2, 10) + "s"
 	debriefString = fmt.Sprintf(dynamicPadding, song.Title)
 	if !debrief.Downloaded && !debrief.MP3Converted && !debrief.CoverConverted {
@@ -225,6 +166,8 @@ func main() {
 	}
 	lib.SetServer(*subsonicUrl, *userNameFlag, *passwordFlag)
 
+	fmt.Println("Welcome to RockSonic!")
+
 	ffmpeg.LogCompiledCommand = false
 
 	lib.InitMagick()
@@ -232,7 +175,6 @@ func main() {
 
 	var err error
 
-	fmt.Println("Welcome to RockSonic!")
 	var songs []lib.Song
 	var playlistName string
 
@@ -258,21 +200,20 @@ func main() {
 		coverSize:  *coverSize,
 		mp3Quality: *mp3Quality,
 	}
+
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, *concurrency)
 	deb := make(chan string)
 
 	for _, song := range songs {
-
 		if int64(len(song.Title)) > longest_song_title {
 			longest_song_title = int64(len(song.Title))
 		}
 	}
-	for _, song := range songs {
 
+	for _, song := range songs {
 		wg.Add(1)
 		go processSong(song, songConfig, dirs, &wg, sem, deb)
-		// fmt.Printf("%s -> %s -> %3s. %s\n", song.Artist, song.Album, song.Track, song.Title)
 	}
 	for i := 0; i < len(songs); i++ {
 		debStr := <-deb
