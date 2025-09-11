@@ -14,8 +14,6 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-
       - name: Set up Go
         uses: actions/setup-go@v4
         with:
@@ -48,21 +46,9 @@ jobs:
           export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
 
           cd ..
-      - name: Verify installations
-        run: |
-          which ffmpeg
-          ffmpeg -version
-          which pkg-config
-          pkg-config --modversion MagickWand MagickCore
-          echo "PATH: $PATH"
-          echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
-      - name: Verify FFmpeg installation
-        run: |
-          which ffmpeg
-          ffmpeg -version
-          echo "PATH: $PATH"
+      - uses: actions/checkout@v4
       - name: Build
-        run: go build -x -v ./main.go
+        run: go build -x -v ./rocksonic.go
         env:
           CGO_ENABLED: 1
       - name: pwd
