@@ -3,7 +3,7 @@
 
 name: Build Linux
 permissions:
-  contents: read # access to check out code and install dependencies
+  contents: write # access to check out code and install dependencies
 on:
   push:
     branches: ["master"]
@@ -51,7 +51,67 @@ jobs:
         run: go build -x -v ./rocksonic.go
         env:
           CGO_ENABLED: 1
-      - name: pwd
-        run: pwd
-      - name: list dir content
-        run: ls -la
+      - name: Create release assets
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          BUILD_DATE=$(date -u +"%Y-%m-%d")
+
+          # Create checksums
+          sha256sum rocksonic > checksums.txt
+
+          # Create release notes
+          cat > release-notes.md << EOF
+          # Latest Build - $BUILD_DATE
+
+          **Commit:** [\`$SHORT_SHA\`](${{ github.server_url }}/${{ github.repository }}/commit/${{ github.sha }})
+
+          ## Download
+          - **Linux AMD64**: \`rocksonic\`
+
+          ## Installation
+          1. Download the binary
+          2. Make it executable: \`rocksonic\`
+          3. Run it: \`./rocksonic\`
+
+          ## Requirements
+          - This binary requires ImageMagick 7 and ffmpeg to be installed on the target system
+          - On Ubuntu/Debian: \`sudo apt install imagemagick ffmpeg\`
+
+          ## Build Information
+          - **Built on:** $BUILD_DATE
+          - **Go Version:** $(go version)
+          - **ImageMagick Version:** $(magick -version | head -1)
+          - **Git SHA:** ${{ github.sha }}
+          - **Binary Size:** $(du -h ./myapp-linux-amd64 | cut -f1)
+
+          ## Verification
+          Verify file integrity using SHA256:
+          \`\`\`bash
+          sha256sum -c checksums.txt
+          \`\`\`
+          EOF
+
+      - name: Delete previous latest release
+        run: |
+          # Delete the previous "latest" release and tag if they exist
+          gh release delete latest --yes || echo "No previous 'latest' release found"
+          git push --delete origin latest || echo "No previous 'latest' tag found"
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create latest release
+        run: |
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-8)
+          BUILD_DATE=$(date -u +"%Y-%m-%d")
+
+          git tag latest
+          git push origin latest
+
+          gh release create latest \
+            --title "Latest Build - $BUILD_DATE ($SHORT_SHA)" \
+            --notes "Built from commit $SHORT_SHA on $BUILD_DATE" \
+            --latest \
+            myapp-linux-amd64 \
+            checksums.txt
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
