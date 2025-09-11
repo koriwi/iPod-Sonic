@@ -24,6 +24,30 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ffmpeg libmagickwand-dev libmagickcore-dev build-essential pkg-config
+          echo "Installing ImageMagick 7 from source..."
+          wget https://github.com/ImageMagick/ImageMagick/archive/7.1.1-29.tar.gz
+          tar xzf 7.1.1-29.tar.gz
+          cd ImageMagick-7.1.1-29
+
+          # Configure and build ImageMagick 7
+          ./configure \
+            --prefix=/usr/local \
+            --enable-shared \
+            --disable-static \
+            --with-modules \
+            --with-quantum-depth=16 \
+            --with-hdri \
+            --without-perl
+
+          make -j$(nproc)
+          sudo make install
+          sudo ldconfig
+
+          # Update pkg-config path
+          echo "PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH" >> $GITHUB_ENV
+          export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:$PKG_CONFIG_PATH"
+
+          cd ..
       - name: Verify installations
         run: |
           which ffmpeg
