@@ -48,8 +48,10 @@ jobs:
             --without-perl
 
           make -j$(nproc)
+          cd ..
       - name: Install ImageMagick 7
         run: |
+          cd ImageMagick-7.1.1-29
           sudo make install
           cd ..
 
