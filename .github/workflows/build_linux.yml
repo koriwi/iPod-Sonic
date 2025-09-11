@@ -21,7 +21,7 @@ jobs:
       - name: install dependencies
         run: |
           sudo apt update
-          sudo apt install -y ffmpeg build-essential pkg-config
+          sudo apt install -y ffmpeg build-essential pkg-config libltdl-dev
 
       - name: Cache ImageMagick build
         uses: actions/cache@v4
@@ -45,7 +45,6 @@ jobs:
             --disable-static \
             --with-modules \
             --with-quantum-depth=16 \
-            --with-hdri \
             --without-perl
 
           make -j$(nproc)
