@@ -21,7 +21,9 @@ jobs:
         with:
           go-version: "1.24"
       - name: install dependencies
-        run: sudo apt update; sudo apt install -y ffmpeg imagemagick build-essential
+        run: |
+          sudo apt update
+          sudo apt install -y ffmpeg libmagickwand-dev libmagickcore-dev build-essential pkg-config
       - name: Verify FFmpeg installation
         run: |
           which ffmpeg
