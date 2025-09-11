@@ -82,7 +82,7 @@ jobs:
           - **Go Version:** $(go version)
           - **ImageMagick Version:** $(magick -version | head -1)
           - **Git SHA:** ${{ github.sha }}
-          - **Binary Size:** $(du -h ./myapp-linux-amd64 | cut -f1)
+          - **Binary Size:** $(du -h ./rocksonic | cut -f1)
 
           ## Verification
           Verify file integrity using SHA256:
@@ -111,7 +111,7 @@ jobs:
             --title "Latest Build - $BUILD_DATE ($SHORT_SHA)" \
             --notes "Built from commit $SHORT_SHA on $BUILD_DATE" \
             --latest \
-            myapp-linux-amd64 \
+            rocksonic \
             checksums.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
