@@ -215,10 +215,27 @@ func main() {
 		wg.Add(1)
 		go processSong(song, songConfig, dirs, &wg, sem, deb)
 	}
+
 	for i := 0; i < len(songs); i++ {
 		debStr := <-deb
 		fmt.Printf("%6d/%d %s\n", i+1, len(songs), debStr)
 	}
 	wg.Wait()
+
+	entries, err := os.ReadDir(dirs.CombinedSongDir)
+	if *flat {
+		for _, e := range entries {
+			if e.IsDir() {
+				os.RemoveAll(fmt.Sprintf("%s/%s", dirs.CombinedSongDir, e.Name()))
+			}
+		}
+	} else {
+		for _, e := range entries {
+			if !e.IsDir() {
+				os.RemoveAll(fmt.Sprintf("%s/%s", dirs.CombinedSongDir, e.Name()))
+			}
+		}
+	}
+
 	fmt.Println(dirs.ConvertedSongDir)
 }

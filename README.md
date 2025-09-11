@@ -24,7 +24,5 @@ You can run --help to get up to date information on the cli parameters.
 - Build system so you can just download it and don't have to compile it yourself
 - Select the playlist to synch (DONE)
 - Choose between flat and nested folder structure (DONE)
-
-## TODO
-
-- remove removed songs from updated output folder
+- If switching between tree and flat, remove old structure (DONE)
+- add \_mp3 to directory name if content is converted to mp3 (DONE)
