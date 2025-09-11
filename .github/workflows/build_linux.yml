@@ -24,6 +24,14 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y ffmpeg libmagickwand-dev libmagickcore-dev build-essential pkg-config
+      - name: Verify installations
+        run: |
+          which ffmpeg
+          ffmpeg -version
+          which pkg-config
+          pkg-config --modversion MagickWand MagickCore
+          echo "PATH: $PATH"
+          echo "PKG_CONFIG_PATH: $PKG_CONFIG_PATH"
       - name: Verify FFmpeg installation
         run: |
           which ffmpeg
