@@ -48,6 +48,7 @@ jobs:
             --without-perl
 
           make -j$(nproc)
+          pwd
           cd ..
       - name: Install ImageMagick 7
         run: |
