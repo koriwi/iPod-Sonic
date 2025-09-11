@@ -5,8 +5,8 @@ CLI-tool to semi-automate downloading, converting and copying part of your music
 
 ## How to install
 
-Currently you have to compile this project by installing golang on your machine and compiling it with `go build main.go`.
-The automated built systems is currently broken. When it is fixed, you can just download the binaries and run them directly.
+Currently linux only. Windows and MacOS testers will be appreciated!
+Just download the rocksonic binary from the sidebar/releases
 
 ## How to run
 
@@ -21,7 +21,7 @@ You can run --help to get up to date information on the cli parameters.
 
 ## Upcoming features
 
-- Build system so you can just download it and don't have to compile it yourself
+- Build system so you can just download it and don't have to compile it yourself (DONE)
 - Select the playlist to synch (DONE)
 - Choose between flat and nested folder structure (DONE)
 - If switching between tree and flat, remove old structure (DONE)
